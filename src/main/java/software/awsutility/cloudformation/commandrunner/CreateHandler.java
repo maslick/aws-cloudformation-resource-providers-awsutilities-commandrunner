@@ -15,7 +15,6 @@ import com.amazonaws.services.simplesystemsmanagement.AWSSimpleSystemsManagement
 import com.amazonaws.services.simplesystemsmanagement.model.GetParameterRequest;
 import com.amazonaws.services.simplesystemsmanagement.model.GetParameterResult;
 import com.amazonaws.services.simplesystemsmanagement.model.PutParameterRequest;
-import com.amazonaws.services.simplesystemsmanagement.model.PutParameterResult;
 import software.amazon.cloudformation.proxy.AmazonWebServicesClientProxy;
 import software.amazon.cloudformation.proxy.HandlerErrorCode;
 import software.amazon.cloudformation.proxy.Logger;
@@ -51,25 +50,31 @@ public class CreateHandler extends BaseHandler<CallbackContext> {
          INFO: 'request' has information like region and AWS account ID
         */
 
-        if (callbackContext == null) {
+        logger.log("Subnet: " + model.getSubnetId());
+        logger.log("SG: " + model.getSecurityGroupId());
+        logger.log("Role: " + model.getRole());
+        logger.log("Command: " + model.getCommand());
+        logger.log("LogGroup: " + model.getLogGroup());
 
-            AmazonCloudFormation stackbuilder = AmazonCloudFormationClientBuilder.standard()
-                  .build();
+        AmazonCloudFormation stackbuilder = AmazonCloudFormationClientBuilder.standard().build();
+
+        if (callbackContext == null) {
 
             Random random = new Random();
             String generatedString = random.ints(97, 122 + 1)
                     .limit(10)
                     .collect(StringBuilder::new, StringBuilder::appendCodePoint, StringBuilder::append)
                     .toString();
-            String stackName           = "AWSUtility-CloudFormation-CommandRunner-"+generatedString;
+            String stackName = "AWSUtility-CloudFormation-CommandRunner-" + generatedString;
 
             try {
-                InputStream in = CreateHandler.class.getResourceAsStream("/BaseTemplate.json");
+                InputStream in = CreateHandler.class.getResourceAsStream("/BaseTemplate.yaml");
                 BufferedReader reader = new BufferedReader(new InputStreamReader(in));
                 StringBuilder out = new StringBuilder();
                 String line;
                 while ((line = reader.readLine()) != null) {
                     out.append(line);
+                    out.append("\n");
                 }
 
                 CreateStackRequest createRequest = new CreateStackRequest();
@@ -81,8 +86,9 @@ public class CreateHandler extends BaseHandler<CallbackContext> {
                 Parameter AMIId = new Parameter();
                 AMIId.setParameterKey("AMIId");
 
-                //Dynamically get latest Amazon Linux 2 AMI for the region
-                  AWSSimpleSystemsManagement simpleSystemsManagementClient = ((AWSSimpleSystemsManagementClientBuilder.standard())).build();
+                // Dynamically get latest Amazon Linux 2 AMI for the region
+                logger.log("Fetching the latest Amazon Linux 2 AMI for the current region");
+                AWSSimpleSystemsManagement simpleSystemsManagementClient = ((AWSSimpleSystemsManagementClientBuilder.standard())).build();
 
                 GetParameterRequest parameterRequest = new GetParameterRequest();
                 parameterRequest.withName("/aws/service/ami-amazon-linux-latest/amzn2-ami-hvm-x86_64-gp2").setWithDecryption(Boolean.valueOf(true));
@@ -97,7 +103,8 @@ public class CreateHandler extends BaseHandler<CallbackContext> {
                 Command.setParameterValue(model.getCommand());
                 parameters.add(Command);
 
-                if (model.getRole() != null || model.getRole() == "") {
+                if (model.getRole() != null) {
+                    logger.log("Setting user-defined Instance profile (role): " + model.getRole());
                     Parameter IamInstanceProfile = new Parameter();
                     IamInstanceProfile.setParameterKey("IamInstanceProfile");
                     IamInstanceProfile.setParameterValue(model.getRole());
@@ -106,21 +113,22 @@ public class CreateHandler extends BaseHandler<CallbackContext> {
 
                 Parameter InstanceType = new Parameter();
                 InstanceType.setParameterKey("InstanceType");
-                //Note: HardCoded for now, will change in the future if the resource allows the customer to specify instance type.
+                // Note: HardCoded for now, will change in the future if the resource allows the customer to specify instance type.
                 InstanceType.setParameterValue(INSTANCE_TYPE);
                 parameters.add(InstanceType);
 
-                if (model.getLogGroup() != null || model.getLogGroup() == "") {
+                if (model.getLogGroup() != null) {
+                    logger.log("Setting user-defined Log group: " + model.getLogGroup());
                     Parameter LogGroup = new Parameter();
                     LogGroup.setParameterKey("LogGroup");
                     LogGroup.setParameterValue(model.getLogGroup());
                     parameters.add(LogGroup);
                 }
 
-                //Dynamically gets both vpcId and subnetId
+                // Dynamically gets both vpcId and subnetId
                 System.out.println(model.toString());
-                if ((model.getSubnetId() == null && model.getSecurityGroupId() == null) ||
-                        (model.getSubnetId() == "" && model.getSecurityGroupId() == "")) { //Check if user provided the subnetId, if not get a default.
+                if ((model.getSubnetId() == null && model.getSecurityGroupId() == null)) { //Check if user provided the subnetId, if not get a default.
+                    logger.log("Both Subnet and SG are not set... ");
                     System.out.println("Inside dynamic creation workflow!");
                     Parameter SubnetId = new Parameter();
                     SubnetId.setParameterKey("SubnetId");
@@ -159,9 +167,9 @@ public class CreateHandler extends BaseHandler<CallbackContext> {
                     parameters.add(SubnetId);
                     parameters.add(VpcId);
                 }
-                //Both are provided
-                else if ((model.getSubnetId() != null && model.getSecurityGroupId() != null) ||
-                        (model.getSubnetId() != "" && model.getSecurityGroupId() != "")) {
+                // Both are provided
+                else if ((model.getSubnetId() != null && model.getSecurityGroupId() != null)) {
+                    logger.log("Both Subnet and SG are provided.");
                     System.out.println("INSIDE BOTH ARE PROVIDED WORKFLOW.");
                     Parameter SubnetId = new Parameter();
                     SubnetId.setParameterKey("SubnetId");
@@ -170,13 +178,13 @@ public class CreateHandler extends BaseHandler<CallbackContext> {
 
                     Parameter SecurityGroupId = new Parameter();
                     SecurityGroupId.setParameterKey("SecurityGroupId");
-                    //Note: HardCoded for now, will have to change in the future.
+                    // Note: HardCoded for now, will have to change in the future.
                     SecurityGroupId.setParameterValue(model.getSecurityGroupId());
                     parameters.add(SecurityGroupId);
                 }
-                //Subnet is provided, but not SecurityGroup. Infer VPC from Subnet and provide VPCId to CFN Stack
-                else if ((model.getSubnetId() != null && model.getSecurityGroupId() == null) ||
-                        (model.getSubnetId() != "" && model.getSecurityGroupId() == "")) {
+                // Subnet is provided, but not SecurityGroup. Infer VPC from Subnet and provide VPCId to CFN Stack
+                else if ((model.getSubnetId() != null && model.getSecurityGroupId() == null)) {
+                    logger.log("Subnet is set, but SG is not set... ");
                     System.out.println("INSIDE SUBNET PROVIDED NO SECURITY GROUP WORKFLOW.");
                     Parameter SubnetId = new Parameter();
                     SubnetId.setParameterKey("SubnetId");
@@ -196,8 +204,8 @@ public class CreateHandler extends BaseHandler<CallbackContext> {
 
                 }
 
-                else if ((model.getSubnetId() == null && model.getSecurityGroupId() != null) ||
-                        (model.getSubnetId() == "") && model.getSecurityGroupId() != "") {
+                else if ((model.getSubnetId() == null && model.getSecurityGroupId() != null)) {
+                    logger.log("Subnet not set, SG is set...");
                     System.out.println("No SubnetId provided, when using SecurityGroupId, property SubnetId is required.");
                     return ProgressEvent.<ResourceModel, CallbackContext>builder()
                             .status(OperationStatus.FAILED)
@@ -208,10 +216,11 @@ public class CreateHandler extends BaseHandler<CallbackContext> {
 
                 createRequest.setParameters(parameters);
                 System.out.println(createRequest.getParameters().toString());
-                //Inject creds and call instead
+                // Inject creds and call instead
+                logger.log("Creating stack...");
                 proxy.injectCredentialsAndInvoke(createRequest, stackbuilder::createStack);
 
-                //If CallbackContext coming in is null, always create stack and set OperationStatus.IN_PROGRESS
+                // If CallbackContext coming in is null, always create stack and set OperationStatus.IN_PROGRESS
                 model.setId(generatedString);
                 return ProgressEvent.<ResourceModel, CallbackContext>builder()
                         .resourceModel(model)
@@ -228,6 +237,7 @@ public class CreateHandler extends BaseHandler<CallbackContext> {
                 System.out.println("AWS Error Code:   " + ase.getErrorCode());
                 System.out.println("Error Type:       " + ase.getErrorType());
                 System.out.println("Request ID:       " + ase.getRequestId());
+                logger.log("Caught an AmazonServiceException: " + ase.getMessage());
                 return ProgressEvent.<ResourceModel, CallbackContext>builder()
                         .status(OperationStatus.FAILED)
                         .errorCode(HandlerErrorCode.InternalFailure)
@@ -238,6 +248,7 @@ public class CreateHandler extends BaseHandler<CallbackContext> {
                 System.out.println("Caught an AmazonClientException, which means the client encountered "
                         + "a serious internal problem while trying to communicate with AWS CloudFormation, "
                         + "such as not being able to access the network.");
+                logger.log("Caught an AmazonClientException: " + ace.getMessage());
                 System.out.println("Error Message: " + ace.getMessage());
                 return ProgressEvent.<ResourceModel, CallbackContext>builder()
                         .status(OperationStatus.FAILED)
@@ -250,10 +261,9 @@ public class CreateHandler extends BaseHandler<CallbackContext> {
 
         } else {
 
-            AmazonCloudFormation stackbuilder = AmazonCloudFormationClientBuilder.standard()
-                    .build();
+            logger.log("Stack generation in progress...");
 
-            //From context check the status of the stack by looking up the stackName property.
+            // From context check the status of the stack by looking up the stackName property.
             String stackName = callbackContext.getStackName();
             DescribeStacksRequest wait = new DescribeStacksRequest();
             wait.setStackName(stackName);
@@ -275,23 +285,21 @@ public class CreateHandler extends BaseHandler<CallbackContext> {
                 if(stacks.get(0).getStackStatus().equals(StackStatus.CREATE_COMPLETE.toString())) {
                     model.setId(callbackContext.getStackId());
                     model.setOutput(stacks.get(0).getOutputs().get(0).getOutputValue());
-                    //DELETE Stack and terminate EC2 instance.
+                    // DELETE Stack and terminate EC2 instance.
                     AmazonCloudFormation stackBuilder = AmazonCloudFormationClientBuilder.standard()
                             .build();
                     DeleteStackRequest deleteRequest = new DeleteStackRequest();
                     deleteRequest.setStackName(stackName);
                     proxy.injectCredentialsAndInvoke(deleteRequest, stackBuilder::deleteStack);
 
-                    //Make new SSM Parameter with Key=Id and Value=Output
+                    // Make new SSM Parameter with Key=Id and Value=Output
                     AWSSimpleSystemsManagement simpleSystemsManagementClient = ((AWSSimpleSystemsManagementClientBuilder.standard())).build();
                     PutParameterRequest parameterRequest = new PutParameterRequest();
                     parameterRequest.setName(callbackContext.getStackId());
                     parameterRequest.setValue(stacks.get(0).getOutputs().get(0).getOutputValue());
                     parameterRequest.setType("SecureString");
-                    if (model.getKeyId() != null || model.getKeyId() != "") {
-                        parameterRequest.setKeyId(model.getKeyId());
-                    }
-                    PutParameterResult parameterResult = proxy.injectCredentialsAndInvoke(parameterRequest, simpleSystemsManagementClient::putParameter);
+                    if (model.getKeyId() != null) parameterRequest.setKeyId(model.getKeyId());
+                    proxy.injectCredentialsAndInvoke(parameterRequest, simpleSystemsManagementClient::putParameter);
 
                     return ProgressEvent.<ResourceModel, CallbackContext>builder()
                             .resourceModel(model)
@@ -299,7 +307,7 @@ public class CreateHandler extends BaseHandler<CallbackContext> {
                             .build();
                 }
                 if (stacks.get(0).getStackStatus().equals(StackStatus.CREATE_FAILED.toString()) ||
-                    stacks.get(0).getStackStatus().equals(StackStatus.ROLLBACK_COMPLETE)){
+                    stacks.get(0).getStackStatus().equals(StackStatus.ROLLBACK_COMPLETE.toString())){
                     return ProgressEvent.<ResourceModel, CallbackContext>builder()
                             .status(OperationStatus.FAILED)
                             .errorCode(HandlerErrorCode.NotStabilized)
@@ -315,10 +323,9 @@ public class CreateHandler extends BaseHandler<CallbackContext> {
                             .callbackDelaySeconds(30)
                             .build();
             }
-
         }
 
-        //It should never reach this code, if it does something went wrong, so it returns internal failure.
+        // It should never reach this code, if it does something went wrong, so it returns internal failure.
         return ProgressEvent.<ResourceModel, CallbackContext>builder()
                 .status(OperationStatus.FAILED)
                 .errorCode(HandlerErrorCode.InternalFailure)
